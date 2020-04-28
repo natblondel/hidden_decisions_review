@@ -48,8 +48,14 @@ pull_cps<-function(dta){
         hrmis,
         perrp,
         hrnumhou,
-        ptdtrace)]  %>% 
-        setnames(., old = (1:16),
+        ptdtrace,
+        gestfips,
+        pemaritl,
+        prcitshp,
+        hrhhid2,
+        hrlonglk,
+        gereg)]  %>% 
+        setnames(., old = (1:22),
                  new = c("house_id",
                          "sex",
                          "month",
@@ -65,7 +71,13 @@ pull_cps<-function(dta){
                          "sample_month",
                          "ref_pers",
                          "num_res",
-                         "race"))
+                         "race",
+                         "state",
+                         "marital",
+                         "citizen",
+                         "house_id2",
+                         "longitude",
+                         "region"))
 }
 
 
@@ -78,5 +90,4 @@ cps_data <-  month_files %>% map(pull_cps)
 cps_data <- cps_data %>% bind_rows()
 
 saveRDS(cps_data, file="medicare_study/output/cps_merged/cps_data.RDS")
-
 

@@ -21,91 +21,36 @@ cps_data <- readRDS("medicare_study/output/cps_merged/cps_data.RDS")
 ##                      Matching Functions                       -
 ##----------------------------------------------------------------
 
-# household_cps() selects households where the number of residents stays the same, and
-# drops those where it changes. It also filters households with >=4 months of observations
-
-household_cps <- function(cps_obs = cps_obs_group){
-  cps_obs_group %>%
-    filter(age >= 16, class > 0, education > 0, sex > 0, race > 0) %>%
-    group_by(house_id, sample_month) %>%
-    count() %>%
-    ungroup() %>%
-    chop(c(sample_month, n)) %>%
-    mutate(n_unique = map(n, unique)) %>%
-    mutate(length_unique = map_dbl(n_unique, length)) %>%
-    mutate(length_mis = map_dbl(sample_month, length)) %>%
-    filter(length_unique == 1, length_mis >= 4) %>%
-    select(house_id)
-}
-
 # match_cps() matches individuals over time and gives them a unique id. It can do this
 # 'naively', or by default filter out any obvious matching errors. 
 
-match_cps<-function(cps_obs = cps_obs_group, household=household_list, naive = F, na_index=F){
-  if(naive==T & na_index==F){
-    cps_obs %>%
-      filter(house_id %in% household$house_id) %>%
-      group_by(house_id,month,year) %>%
-      arrange(house_id, month, year, sample_month, sex, race, age, education, class) %>% # Add consistency in rownumbers
-      mutate(unique_id = row_number(),
-             unique_id = paste(house_id,unique_id, sep="_")) %>% # Create unique id
-      ungroup() %>% 
-      distinct() # removes any duplicates
-  }
-  else if(naive==F & na_index==T){
-    cps_obs %>%
-      filter(house_id %in% household$house_id) %>%
-      group_by(house_id,month,year) %>%
-      arrange(house_id, month, year, sample_month, sex, race, age, education, class) %>% # Add consistency in rownumbers
-      mutate(unique_id = row_number(),
-             unique_id = paste(house_id,month_i[1],year_i[1],unique_id, sep="_")) %>% # Create unique id
-      ungroup() %>% 
-      group_by(unique_id) %>% 
-      mutate(min_age = min(age),
-             max_age = max(age),
-             min_sex = min(sex),
-             max_sex = max(sex),
-             min_race = min(race),
-             max_race =max(race),
-             min_ed = min(education),
-             max_ed = max(education)) %>% 
-      filter(min_race==max_race, 
-             min_sex==max_sex,
-             max_age-min_age<=2,
-             (max_ed - min_ed)<=2,
-             (max_ed - min_ed)>=0) %>% # removes obviously erroneous matches
-      ungroup() %>% 
-      select_at(vars(!starts_with("min"), !starts_with("max"))) %>% 
-      distinct() # removes any duplicates
-  }
-  
-  else {
-    cps_obs %>%
-      filter(house_id %in% household$house_id) %>%
-      group_by(house_id,month,year) %>%
-      arrange(house_id, month, year, sample_month, sex, race, age, education, class) %>% # Add consistency in rownumbers
-      mutate(unique_id = row_number(),
-             unique_id = paste(house_id,df_i[1,1],df_i[1,2],unique_id, sep="_")) %>% # Create unique id
-      ungroup() %>% 
-      group_by(unique_id) %>% 
-      mutate(min_age = min(age),
-             max_age = max(age),
-             min_sex = min(sex),
-             max_sex = max(sex),
-             min_race = min(race),
-             max_race =max(race),
-             min_ed = min(education),
-             max_ed = max(education)) %>% 
-      filter(min_race==max_race, 
-             min_sex==max_sex,
-             max_age-min_age<=2,
-             (max_ed - min_ed)<=2,
-             (max_ed - min_ed)>=0) %>% # removes obviously erroneous matches
-      ungroup() %>% 
-      select_at(vars(!starts_with("min"), !starts_with("max"))) %>% 
-      distinct() # removes any duplicates
-    
-  }
+match_cps<-function(cps_obs = cps_obs_group, naive = F, na_index=F){
+  cps_obs %>%
+    group_by(house_id,month,year) %>%
+    arrange(house_id, month, year, sample_month, sex, race, age, education, class) %>% 
+    {if(naive==T){ mutate(.,unique_id = paste(house_id,line,num_res, sep="_")) %>% ungroup()} else if(naive==F)
+    {if(na_index==T){mutate(.,unique_id = row_number(),
+                            unique_id = paste(house_id,line,month_i[1],year_i[1],unique_id, sep="_"))}
+      else {mutate(.,unique_id = row_number(),
+                   unique_id = paste(house_id,line,df_i[1,1],df_i[1,2],unique_id, sep="_"))}} %>% 
+        ungroup(.,) %>% 
+        group_by(unique_id) %>% 
+        mutate(min_age = min(age),
+               max_age = max(age),
+               min_sex = min(sex),
+               max_sex = max(sex),
+               min_race = min(race),
+               max_race =max(race),
+               min_ed = min(education),
+               max_ed = max(education)) %>% 
+        filter(min_race==max_race, 
+               min_sex==max_sex,
+               max_age-min_age<=2,
+               (max_ed - min_ed)<=2,
+               (max_ed - min_ed)>=0) %>% # removes obviously erroneous matches
+        ungroup() %>% 
+        select_at(vars(-starts_with("min"), -starts_with("max")))} %>% 
+    distinct()
 }
 
 
@@ -151,10 +96,12 @@ months_set_list
 
 ## Match observations in the normal set
 
-# Looping over the list of data patterns and applying matching function
+# Looping over the list of data patterns and applying matching function to naive and filtered
 
 match_obs_list_ns <- list()
+match_obs_list_ns_n <- list()
 
+# Filtered
 
 for (i in 1:17) {
   # Reassignment for clearer reading
@@ -176,18 +123,44 @@ for (i in 1:17) {
     ) %>%
     filter(class > 0, education > 0, class > 0, sex > 0, age >= 16)
 
-  # Create vector of household ids with no changes in hhold size & at least four months of observations
-  household_list <- household_cps()
-
   # Match individuals
 
-  match_obs_list_ns[[i]] <- match_cps(household = household_list)
+  match_obs_list_ns[[i]] <- match_cps()
 }
 
-# Naive Match rate (w/o lines 247-262): 627,552
-# Remove erroneous matches: 550,921 observations - 87.8% match rate
+# Naive
+
+for (i in 1:17) {
+  # Reassignment for clearer reading
+  
+  df_i <- months_set_list[[i]]
+  
+  # Filter data with no missing values (>0), over 16 years old, with correct date pattern
+  
+  cps_obs_group <- cps_data %>%
+    filter(
+      (month == df_i[[1, 1]] & year == df_i[[1, 2]] & sample_month == df_i[[1, 3]]) |
+        (month == df_i[[2, 1]] & year == df_i[[2, 2]] & sample_month == df_i[[2, 3]]) |
+        (month == df_i[[3, 1]] & year == df_i[[3, 2]] & sample_month == df_i[[3, 3]]) |
+        (month == df_i[[4, 1]] & year == df_i[[4, 2]] & sample_month == df_i[[4, 3]]) |
+        (month == df_i[[1, 4]] & year == df_i[[1, 5]] & sample_month == df_i[[1, 6]]) |
+        (month == df_i[[2, 4]] & year == df_i[[2, 5]] & sample_month == df_i[[2, 6]]) |
+        (month == df_i[[3, 4]] & year == df_i[[3, 5]] & sample_month == df_i[[3, 6]]) |
+        (month == df_i[[4, 4]] & year == df_i[[4, 5]] & sample_month == df_i[[4, 6]])
+    ) %>%
+    filter(class > 0, education > 0, class > 0, sex > 0, age >= 16)
+  
+  # Match individuals
+  
+  match_obs_list_ns_n[[i]] <- match_cps(naive = T)
+}
 
 normal_set_matches <- match_obs_list_ns %>% bind_rows()
+normal_set_matches_n <- match_obs_list_ns_n %>% bind_rows()
+
+# Naive matches: 1,204,366
+# Filtered matches: 915,745 - 24% removed
+
 
 ##------------
 ##  Half Set  
@@ -211,8 +184,11 @@ for (i in 2:9){
 # Empty list
 
 match_obs_list_hs <- list()
+match_obs_list_hs_n <- list()
 
 # Loop 
+
+# Filtered
 
 for (i in 1:9){
   
@@ -229,20 +205,42 @@ for (i in 1:9){
     ) %>% 
     filter(class>0, education>0, class>0, sex>0, age>=16)
   
-  # Create vector of household ids with no changes in hhold size & at least four months of observations
-  
- household_list <- household_cps()
-  
   # Match each group 
   
-  match_obs_list_hs[[i]] <- match_cps(household=household_list)
+  match_obs_list_hs[[i]] <- match_cps()
   
 }
 
-half_set_matches<-match_obs_list_hs %>% bind_rows()
+# Naive
 
-# Naive matches: 206,842
-# Remove erroneous matches: 199,094, match rate: 96.3%
+for (i in 1:9){
+  
+  df_i <- months_halfset_list[[i]]
+  
+  # Filter data with no missing values (>0), over 16 years old, with correct date pattern
+  
+  cps_obs_group <- cps_data %>%
+    filter(
+      (month == df_i[[1, 1]] & year == df_i[[1, 2]] & sample_month == df_i[[1, 3]]) |
+        (month == df_i[[2, 1]] & year == df_i[[2, 2]] & sample_month == df_i[[2, 3]]) |
+        (month == df_i[[3, 1]] & year == df_i[[3, 2]] & sample_month == df_i[[3, 3]]) |
+        (month == df_i[[4, 1]] & year == df_i[[4, 2]] & sample_month == df_i[[4, 3]])
+    ) %>% 
+    filter(class>0, education>0, class>0, sex>0, age>=16)
+  
+  # Match each group 
+  
+  match_obs_list_hs_n[[i]] <- match_cps(naive=T)
+  
+}
+
+
+half_set_matches<-match_obs_list_hs %>% bind_rows()
+half_set_matches_n<-match_obs_list_hs_n %>% bind_rows()
+
+# Naive matches: 319,830
+# Remove erroneous matches: 289,474, ~ 10% removed
+
 
 
 ##------------------------
@@ -271,8 +269,9 @@ for (i in 2:3){
 # Empty list
 
 match_obs_list_tre <- list()
+match_obs_list_tre_n <- list()
 
-# Loop 
+# Filtered
 
 for (i in 1:3){
   
@@ -293,21 +292,44 @@ for (i in 1:3){
     ) %>% 
     filter(class>0, education>0, class>0, sex>0, age>=16)
   
-  # Create vector of household ids with no changes in hhold size/
-  # at least four months of observations
+  # Match individuals
   
-  # Create vector of household ids with no changes in hhold size & at least four months of observations
-  household_list <- household_cps()
+  match_obs_list_tre[[i]] <- match_cps()
+}
+
+# Naive
+
+for (i in 1:3){
+  
+  df_i <- months_truncend_set_list[[i]]
+  
+  # Filter data with no missing values (>0), over 16 years old, with correct date pattern
+  
+  cps_obs_group <- cps_data %>%
+    filter(
+      (month == df_i[[1, 1]] & year == df_i[[1, 2]] & sample_month == df_i[[1, 3]]) |
+        (month == df_i[[2, 1]] & year == df_i[[2, 2]] & sample_month == df_i[[2, 3]]) |
+        (month == df_i[[3, 1]] & year == df_i[[3, 2]] & sample_month == df_i[[3, 3]]) |
+        (month == df_i[[4, 1]] & year == df_i[[4, 2]] & sample_month == df_i[[4, 3]]) |
+        (month == df_i[[1, 4]] & year == df_i[[1, 5]] & sample_month == df_i[[1, 6]]) |
+        (month == df_i[[2, 4]] & year == df_i[[2, 5]] & sample_month == df_i[[2, 6]]) |
+        (month == df_i[[3, 4]] & year == df_i[[3, 5]] & sample_month == df_i[[3, 6]]) |
+        (month == df_i[[4, 4]] & year == df_i[[4, 5]] & sample_month == df_i[[4, 6]])
+    ) %>% 
+    filter(class>0, education>0, class>0, sex>0, age>=16)
   
   # Match individuals
   
-  match_obs_list_tre[[i]] <- match_cps(household = household_list)
+  match_obs_list_tre_n[[i]] <- match_cps(naive=T)
 }
 
-truncend_set_matches <- match_obs_list_tre %>% bind_rows()
 
-# Naive matches: 85,378
-# Remove erroneous matches: 76,383,  match rate: 89.5%
+truncend_set_matches <- match_obs_list_tre %>% bind_rows()
+truncend_set_matches_n <- match_obs_list_tre_n %>% bind_rows()
+
+# Naive matches: 157,067
+# Remove erroneous matches: 124,424 ~30% removed
+
 
 ##--------------------------
 ##  Truncated-at-start Set  
@@ -341,8 +363,9 @@ months_truncstart_set_list[[4]]<-months_truncstart_set_d
 # Empty list
 
 match_obs_list_trs <- list()
+match_obs_list_trs_n <- list()
 
-# Loop 
+# Filtered
 
 for (i in 1:4){
   
@@ -363,9 +386,43 @@ for (i in 1:4){
     ) %>% 
     filter(class>0, education>0, class>0, sex>0, age>=16)
   
-  # Create vector of household ids with no changes in hhold size/
+  # For consistency in unique id names
   
-  household_list <- household_cps()
+  month_i<-df_i$months_1 %>% 
+    coalesce() %>% 
+    na.omit() %>% 
+    first()
+  
+  year_i <- df_i$year_1 %>% 
+    coalesce() %>% 
+    na.omit() %>% 
+    first()
+  
+  # Match each group 
+  
+  match_obs_list_trs[[i]] <- match_cps(na_index=T)
+}
+
+# Naive
+
+for (i in 1:4){
+  
+  df_i <- months_truncstart_set_list[[i]]
+  
+  # Filter data with no missing values (>0), over 16 years old, with correct date pattern
+  
+  cps_obs_group <- cps_data %>%
+    filter(
+      (month == df_i[[1, 1]] & year == df_i[[1, 2]] & sample_month == df_i[[1, 3]]) |
+        (month == df_i[[2, 1]] & year == df_i[[2, 2]] & sample_month == df_i[[2, 3]]) |
+        (month == df_i[[3, 1]] & year == df_i[[3, 2]] & sample_month == df_i[[3, 3]]) |
+        (month == df_i[[4, 1]] & year == df_i[[4, 2]] & sample_month == df_i[[4, 3]]) |
+        (month == df_i[[1, 4]] & year == df_i[[1, 5]] & sample_month == df_i[[1, 6]]) |
+        (month == df_i[[2, 4]] & year == df_i[[2, 5]] & sample_month == df_i[[2, 6]]) |
+        (month == df_i[[3, 4]] & year == df_i[[3, 5]] & sample_month == df_i[[3, 6]]) |
+        (month == df_i[[4, 4]] & year == df_i[[4, 5]] & sample_month == df_i[[4, 6]])
+    ) %>% 
+    filter(class>0, education>0, class>0, sex>0, age>=16)
   
   # For consistency in unique id names
   
@@ -379,25 +436,33 @@ for (i in 1:4){
     na.omit() %>% 
     first()
   
-  
-  
   # Match each group 
   
-  match_obs_list_trs[[i]] <- match_cps(household=household_list, na_index=T)
+  match_obs_list_trs_n[[i]] <- match_cps(na_index=T, naive=T)
 }
 
 truncstart_set_matches <- match_obs_list_trs %>% bind_rows()
+truncstart_set_matches_n <- match_obs_list_trs_n %>% bind_rows()
 
-# Naive matches: 108,180
-# Remove erroneous matches: 99,010,  match rate: 95.5%
+match_cps(naive=T, na_index = T)
+
+# Naive matches: 194,621
+# Remove erroneous matches: 160,055,  ~ 18% removed
+
+
 
 ##---------------------------------------------------------------
 ##                      Join Observations                       -
 ##---------------------------------------------------------------
 
+# Join observations
+
 cps_matched <- rbind(truncend_set_matches,truncstart_set_matches,normal_set_matches,half_set_matches)
+
+cps_matched_naive <- rbind(truncend_set_matches_n,truncstart_set_matches_n,normal_set_matches_n,half_set_matches_n)
+
+# Save data file
 
 saveRDS(cps_matched, file="medicare_study/output/cps_matched/cps_matched.RDS")
 
-  
-
+saveRDS(cps_matched_naive, file="medicare_study/output/cps_matched/cps_matched_naive.RDS")
